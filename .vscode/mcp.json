@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "browser-proxy": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "CDP_URL": "http://localhost:9222"
+      }
+    }
+  }
+}

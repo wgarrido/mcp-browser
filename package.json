@@ -1,0 +1,34 @@
+{
+  "name": "browser-mcp-proxy",
+  "version": "1.0.0",
+  "description": "MCP server that proxies web requests through the user's real Chrome browser via CDP",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "browser-mcp-proxy": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@mozilla/readability": "^0.5.0",
+    "jsdom": "^26.1.0",
+    "puppeteer-core": "^24.7.2",
+    "turndown": "^7.2.0",
+    "turndown-plugin-gfm": "^1.0.2",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/turndown": "^5.0.5",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
