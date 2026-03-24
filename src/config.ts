@@ -7,6 +7,9 @@ export interface Config {
   cacheTtl: number;
   searchEngine: "google" | "duckduckgo";
   logLevel: "debug" | "info" | "warn" | "error";
+  sessionTimeoutMinutes: number;
+  /** Named Chrome profiles mapping profile name → CDP URL. */
+  profiles: Record<string, string>;
 }
 
 const VALID_SEARCH_ENGINES = ["google", "duckduckgo"] as const;
@@ -27,6 +30,23 @@ function parseEnum<T extends string>(
   return valid.includes(value as T) ? (value as T) : fallback;
 }
 
+function parseProfiles(value: string | undefined): Record<string, string> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const result: Record<string, string> = {};
+      for (const [key, val] of Object.entries(parsed)) {
+        if (typeof val === "string") result[key] = val;
+      }
+      return result;
+    }
+  } catch {
+    // Invalid JSON
+  }
+  return {};
+}
+
 export function getConfig(): Config {
   return {
     cdpUrl: process.env.CDP_URL ?? "http://localhost:9222",
@@ -37,6 +57,8 @@ export function getConfig(): Config {
     cacheTtl: parseIntSafe(process.env.CACHE_TTL, 300),
     searchEngine: parseEnum(process.env.SEARCH_ENGINE, VALID_SEARCH_ENGINES, "google"),
     logLevel: parseEnum(process.env.LOG_LEVEL, VALID_LOG_LEVELS, "info"),
+    sessionTimeoutMinutes: parseIntSafe(process.env.SESSION_TIMEOUT_MINUTES, 30),
+    profiles: parseProfiles(process.env.CHROME_PROFILES),
   };
 }
 
