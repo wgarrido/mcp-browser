@@ -254,6 +254,21 @@ Google may show a CAPTCHA. Switch to DuckDuckGo: `"SEARCH_ENGINE": "duckduckgo"`
 **"Cloudflare challenge page"**
 The server auto-waits up to 15s for Cloudflare challenges. If it needs manual verification, use `open_tab` to create a persistent session, solve it in Chrome, then use the `tab_id` with other tools.
 
+**"MCP error -32000: Connection closed"**
+This can have two causes:
+
+1. **Chrome is not running with CDP enabled** — If you're not using `CHROME_HEADLESS=true`, make sure Chrome is launched with `--remote-debugging-port=9222` before starting the server. Verify with:
+   ```bash
+   curl http://localhost:9222/json/version
+   ```
+   If this returns an error, Chrome is not listening. See [Launch Chrome with CDP](#launch-chrome-with-cdp).
+
+2. **Corrupted npx cache** — If you see `TypeError: Comparator is not a constructor` in the logs, the npx cache is corrupted. Clear it and retry:
+   ```bash
+   rm -rf ~/.npm/_npx/*
+   # The next npx -y @wgarrido/mcp-browser call will re-download cleanly
+   ```
+
 ---
 
 ## Development
