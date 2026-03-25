@@ -6,9 +6,9 @@
 
 MCP server that lets AI assistants browse the web through your real Chrome — with your cookies, sessions, and fingerprint. No bot detection. No CAPTCHAs.
 
-[![npm version](https://img.shields.io/npm/v/mcp-browser.svg)](https://www.npmjs.com/package/@wgarrido/mcp-browser)
-[![npm downloads](https://img.shields.io/npm/dm/mcp-browser.svg)](https://www.npmjs.com/package/@wgarrido/mcp-browser)
-[![license](https://img.shields.io/npm/l/mcp-browser.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/%40wgarrido%2Fmcp-browser.svg)](https://www.npmjs.com/package/@wgarrido/mcp-browser)
+[![npm downloads](https://img.shields.io/npm/dm/%40wgarrido%2Fmcp-browser.svg)](https://www.npmjs.com/package/@wgarrido/mcp-browser)
+[![license](https://img.shields.io/npm/l/%40wgarrido%2Fmcp-browser.svg)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/wgarrido/mcp-browser/ci.yml?label=CI)](https://github.com/wgarrido/mcp-browser/actions)
 
 </div>
