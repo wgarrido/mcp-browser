@@ -12,14 +12,72 @@ interface SearchResult {
 }
 
 async function dismissCookieConsent(page: Page): Promise<void> {
-  // Non-blocking: try to click immediately, don't wait 3s for a popup that's rarely there
-  const button = await page.$(
-    'button[id="L2AGLb"], button[aria-label*="Accept"], button[aria-label*="Accepter"]'
-  );
-  if (button) {
-    await button.click();
-    await page.waitForNetworkIdle({ timeout: 2000 }).catch(() => {});
+  // Try multiple selectors — Google changes these frequently
+  const selectors = [
+    'button[id="L2AGLb"]',
+    'button[aria-label*="Accept all"]',
+    'button[aria-label*="Tout accepter"]',
+    'button[aria-label*="Accepter tout"]',
+    'button[aria-label*="Accept"]',
+    'button[aria-label*="Accepter"]',
+  ];
+  for (const selector of selectors) {
+    const button = await page.$(selector);
+    if (button) {
+      await button.click();
+      await page.waitForNetworkIdle({ timeout: 2000 }).catch(() => {});
+      return;
+    }
   }
+}
+
+/** Extract Google results from the current page. Runs inside page.evaluate. */
+function evaluateGoogleResults(seenSerialized: string[], max: number) {
+  const items: Array<{ title: string; url: string; snippet: string }> = [];
+  const seen = new Set(seenSerialized);
+
+  const allH3s = document.querySelectorAll("a[href] h3");
+  for (const h3 of allH3s) {
+    if (items.length >= max) break;
+    const a = h3.closest("a");
+    if (!a) continue;
+    let href = a.getAttribute("href") ?? "";
+    if (!href.startsWith("http")) continue;
+
+    // Strip Google's text fragment highlights (e.g. #:~:text=...)
+    href = href.replace(/#:~:text=.*$/, "");
+    if (seen.has(href)) continue;
+    seen.add(href);
+
+    // Walk up to find the result container for the snippet.
+    let snippet = "";
+    const titleText = h3.textContent?.trim() ?? "";
+    let container: Element | null = a;
+    for (let level = 0; level < 6 && !snippet; level++) {
+      container = container?.parentElement ?? null;
+      if (!container) break;
+
+      const candidates = container.querySelectorAll(
+        "div.VwiC3b, [data-sncf], div[style*='line-clamp'], span.st, em, span"
+      );
+      for (const s of candidates) {
+        const text = s.textContent?.trim() ?? "";
+        if (
+          text.length > 40 &&
+          text !== titleText &&
+          !text.startsWith("http") &&
+          !text.includes("›")
+        ) {
+          snippet = text;
+          break;
+        }
+      }
+    }
+
+    items.push({ title: titleText, url: href, snippet });
+  }
+
+  return items;
 }
 
 async function searchGoogle(
@@ -31,60 +89,43 @@ async function searchGoogle(
 ): Promise<SearchResult[]> {
   return browser.withPage(
     async (page) => {
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${maxResults}&hl=en`;
-      await page.goto(searchUrl, { waitUntil: "networkidle2", timeout });
+      const perPage = 10;
+      const allResults: SearchResult[] = [];
+      const seenUrls: string[] = [];
 
-      // Handle cookie consent popup (GDPR) — non-blocking instant check
-      await dismissCookieConsent(page);
+      // Load pages until we have enough results (max 5 pages to avoid abuse)
+      const maxPages = Math.min(Math.ceil(maxResults / perPage), 5);
 
-      const results = await page.evaluate((max: number) => {
-        const items: Array<{ title: string; url: string; snippet: string }> = [];
+      for (let pageNum = 0; pageNum < maxPages; pageNum++) {
+        const start = pageNum * perPage;
+        const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${perPage}&start=${start}&hl=en`;
+        await page.goto(searchUrl, { waitUntil: "networkidle2", timeout });
 
-        // Primary selectors for Google search results
-        const resultElements = document.querySelectorAll("div.g");
-        for (const el of resultElements) {
-          if (items.length >= max) break;
-
-          const titleEl = el.querySelector("h3");
-          const linkEl = el.querySelector("a[href]");
-          const snippetEl = el.querySelector('[data-sncf], span.st, div[style*="line-clamp"], div.VwiC3b');
-
-          if (titleEl && linkEl) {
-            const href = linkEl.getAttribute("href") ?? "";
-            if (href.startsWith("http")) {
-              items.push({
-                title: titleEl.textContent?.trim() ?? "",
-                url: href,
-                snippet: snippetEl?.textContent?.trim() ?? "",
-              });
-            }
-          }
+        // Handle cookie consent popup on first page
+        if (pageNum === 0) {
+          await dismissCookieConsent(page);
         }
 
-        // Fallback: broader selector if primary found nothing
-        if (items.length === 0) {
-          const allLinks = document.querySelectorAll("a[href] h3");
-          for (const h3 of allLinks) {
-            if (items.length >= max) break;
-            const a = h3.closest("a");
-            if (!a) continue;
-            const href = a.getAttribute("href") ?? "";
-            if (!href.startsWith("http")) continue;
+        const remaining = maxResults - allResults.length;
+        const pageResults = await page.evaluate(
+          evaluateGoogleResults,
+          seenUrls,
+          remaining
+        );
 
-            const parent = a.closest("[data-ved]") ?? a.parentElement?.parentElement;
-            items.push({
-              title: h3.textContent?.trim() ?? "",
-              url: href,
-              snippet: parent?.querySelector("span, div")?.textContent?.trim() ?? "",
-            });
-          }
+        for (const r of pageResults) {
+          if (allResults.length >= maxResults) break;
+          seenUrls.push(r.url);
+          allResults.push(r);
         }
 
-        return items;
-      }, maxResults);
+        // Stop if this page returned few results (no more pages available)
+        if (pageResults.length < 3) break;
+        if (allResults.length >= maxResults) break;
+      }
 
       // Detect CAPTCHA / blocked page — trigger fallback
-      if (results.length === 0) {
+      if (allResults.length === 0) {
         const isCaptcha = await page.evaluate(() => {
           const body = document.body?.innerText?.slice(0, 1000).toLowerCase() ?? "";
           if (document.querySelector("#captcha-form, #recaptcha, .g-recaptcha")) return true;
@@ -97,8 +138,8 @@ async function searchGoogle(
         }
       }
 
-      logger.info(`Google search: "${query}" → ${results.length} results`);
-      return results;
+      logger.info(`Google search: "${query}" → ${allResults.length} results`);
+      return allResults;
     },
     { timeout }
   );
@@ -129,6 +170,48 @@ function adaptQueryForDuckDuckGo(query: string): string {
   return adapted;
 }
 
+/** Extract DuckDuckGo results from the current page. Runs inside page.evaluate. */
+function evaluateDDGResults(seenSerialized: string[], max: number) {
+  const items: Array<{ title: string; url: string; snippet: string }> = [];
+  const seenUrls = new Set(seenSerialized);
+
+  const resultElements = document.querySelectorAll(
+    '[data-testid="result"], article[data-testid="result"], .result'
+  );
+  for (const el of resultElements) {
+    if (items.length >= max) break;
+
+    const allLinks = el.querySelectorAll("a[href]");
+    let linkEl: Element | null = null;
+    for (const a of allLinks) {
+      const h = a.getAttribute("href") ?? "";
+      if (h.startsWith("http") && !h.includes("duckduckgo.com")) {
+        linkEl = a;
+        break;
+      }
+    }
+    if (!linkEl) continue;
+
+    const href = linkEl.getAttribute("href") ?? "";
+    if (seenUrls.has(href)) continue;
+    seenUrls.add(href);
+
+    const titleEl = el.querySelector("h2, h3") ?? linkEl;
+    let snippet = "";
+    const snippetEl = el.querySelector('span[style*="line-clamp"], [data-result="snippet"], .result__snippet');
+    if (snippetEl) {
+      snippet = snippetEl.textContent?.trim() ?? "";
+    }
+
+    items.push({
+      title: titleEl?.textContent?.trim() ?? "",
+      url: href,
+      snippet,
+    });
+  }
+  return items;
+}
+
 async function searchDuckDuckGo(
   browser: BrowserManager,
   query: string,
@@ -144,35 +227,47 @@ async function searchDuckDuckGo(
       // Wait for results to load
       await page.waitForSelector('[data-testid="result"], .result, article', { timeout: 10000 }).catch(() => {});
 
-      const results = await page.evaluate((max: number) => {
-        const items: Array<{ title: string; url: string; snippet: string }> = [];
+      const allResults: SearchResult[] = [];
+      const seenUrls: string[] = [];
 
-        const resultElements = document.querySelectorAll(
-          '[data-testid="result"], article[data-testid="result"], .result'
+      // Extract first page of results
+      const firstPage = await page.evaluate(
+        evaluateDDGResults,
+        seenUrls,
+        maxResults
+      );
+      for (const r of firstPage) {
+        seenUrls.push(r.url);
+        allResults.push(r);
+      }
+
+      // Click "More Results" to load additional pages (max 4 clicks)
+      const maxClicks = Math.min(Math.ceil((maxResults - allResults.length) / 10), 4);
+      for (let click = 0; click < maxClicks && allResults.length < maxResults; click++) {
+        const moreButton = await page.$('button[id="more-results"], a[id="more-results"], button.result--more, [data-testid="more-results"]');
+        if (!moreButton) break;
+
+        await moreButton.click();
+        await page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 500));
+
+        const remaining = maxResults - allResults.length;
+        const newResults = await page.evaluate(
+          evaluateDDGResults,
+          seenUrls,
+          remaining
         );
-        for (const el of resultElements) {
-          if (items.length >= max) break;
 
-          const linkEl = el.querySelector("a[href]");
-          const titleEl = el.querySelector("h2, h3") ?? linkEl;
-          const snippetEl = el.querySelector('[data-result="snippet"], .result__snippet, span');
-
-          if (linkEl) {
-            const href = linkEl.getAttribute("href") ?? "";
-            if (href.startsWith("http")) {
-              items.push({
-                title: titleEl?.textContent?.trim() ?? "",
-                url: href,
-                snippet: snippetEl?.textContent?.trim() ?? "",
-              });
-            }
-          }
+        if (newResults.length === 0) break;
+        for (const r of newResults) {
+          if (allResults.length >= maxResults) break;
+          seenUrls.push(r.url);
+          allResults.push(r);
         }
-        return items;
-      }, maxResults);
+      }
 
-      logger.info(`DuckDuckGo search: "${query}" → ${results.length} results`);
-      return results;
+      logger.info(`DuckDuckGo search: "${query}" → ${allResults.length} results`);
+      return allResults;
     },
     { timeout }
   );
